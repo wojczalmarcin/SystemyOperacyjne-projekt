@@ -41,11 +41,11 @@ class Car
     // zmienna określająca czy samochod jedzie
     bool isDriving;
     // znak oznaczający pojazd
-    const char* id;
+    int id;
 
     public:
     // konstruktor
-    Car(int x, int y, const char* newId)
+    Car(int x, int y, int Id)
     {
         posX = x;
         posY = y;
@@ -53,7 +53,8 @@ class Car
         startPosY = y;
         speed = rand()%60 + 40;
         lap = 0;
-        id = newId;
+        id = Id;
+        isDriving = true;
     }
 
     // funkcja zwracająca prędkość samochodu
@@ -70,7 +71,7 @@ class Car
     bool getIsDriving(){return isDriving;}
 
     // funkcja zwracająca znak pojazdu
-    const char* getId(){return id;}
+    int getId(){return id;}
 
     // funkcja poruszajaca samochód o jedną jednostkę
     void drive()
@@ -114,11 +115,7 @@ class Car
     // funkcja poruszająca samochód do momentu aż przejdzie 3 okrążenia
     // argumentem funkcji jest const bool w celu zapewnienia, że zmienna
     // nie będzie modyfikowana i nie nastąpi "data race"
-    void driveLaps(int random){
-        isDriving = false;
-        if(random>0)
-            this_thread::sleep_for(chrono::milliseconds(random));
-        isDriving = true;
+    void driveLaps(){
         while(lap<maxLaps && isWorking == true)
         {
             drive();
@@ -134,25 +131,17 @@ class Car
 };
 
 // funkcja rysująca samochody
-void draw(vector<Car*> cars)
+void draw(vector<Car*> &cars)
 {
-    //wektor zawierający informację, które samochody jadą
-    vector<bool>drivingCars;
-    for(int i = 0; i<cars.size();i++)
-    {
-        drivingCars.push_back(cars[i]->getIsDriving());
-    }
-    //zmienna kontrolująca, czy wszystkie auta przejechały, jeśli tak to będzie ona wynosić 0
-    short allCarsNotDriving = 1;
-
     initscr();
     cbreak();
     noecho();
     nodelay(stdscr, TRUE);
     scrollok(stdscr, TRUE);
+    curs_set(0);
 
     //jeśli użytkownik nie zakończył programu i wszystkie auta nie przejechały 3 okrążań to program trwa
-    while(isWorking && allCarsNotDriving!=0)
+    while(isWorking)
     {  
         // czyszczenie okna
         erase();
@@ -185,12 +174,13 @@ void draw(vector<Car*> cars)
         {
             if(cars[i]->getIsDriving())
             {
-                mvprintw(cars[i]->getPosY()+3,cars[i]->getPosX()+3,cars[i]->getId());
-                drivingCars[i] = true;
+                string s = std::to_string(cars[i]->getId());
+                char const *pchar = s.c_str();
+                mvprintw(cars[i]->getPosY()+3,cars[i]->getPosX()+3,pchar);
             }
             else
             {
-                drivingCars[i] = false;
+                cars.erase(cars.begin()+i);
             }
         }
         refresh();
@@ -202,13 +192,6 @@ void draw(vector<Car*> cars)
             ungetch(ch);
             isWorking = false;
         }
-
-        //zsumowanie wartości informacji o jadących samochodach, jeśli suma wynosi 0 to znaczy że wszystkie auta przejechały trasę
-        allCarsNotDriving = 0;
-        for(int i = 0; i<drivingCars.size();i++)
-        {
-            allCarsNotDriving+=drivingCars[i];
-        }
     }
     endwin(); 
     cout<<"Zamykanie wszystkich watkow..."<<endl;
@@ -218,25 +201,24 @@ int main()
 {
     srand(time(0));
     vector<Car*> carsVector;
-    Car * car1 = new Car(10,0,"A");
-    Car * car2 = new Car(10,0,"B");
-    Car * car3 = new Car(10,0,"C");
-    Car * car4 = new Car(10,0,"D");
-    carsVector.push_back(car1);
-    carsVector.push_back(car2);
-    carsVector.push_back(car3);
-    carsVector.push_back(car4);
+    vector<thread> carThreads;
+    carsVector.emplace_back(new Car(10,0,0));
+    carThreads.emplace_back(&Car::driveLaps,carsVector.back());
+    thread ncursesThread(draw,ref(carsVector));
 
-    thread t1(&Car::driveLaps,car1,0);
-    thread t2(&Car::driveLaps,car2,rand()%100);
-    thread t3(&Car::driveLaps,car3,rand()%100);
-    thread t4(&Car::driveLaps,car4,rand()%100);
-    thread ncursesThread(draw,carsVector);   
-    
-    t1.join();
-    t2.join();
-    t3.join();
-    t4.join();
+    int number = 0;
+    while(isWorking)
+    {
+        this_thread::sleep_for(chrono::milliseconds(rand()%10000));
+        number++;
+        if(number>9)
+            number = 0;
+        carsVector.emplace_back(new Car(10,0,number));
+        carThreads.emplace_back(&Car::driveLaps,carsVector.back());
+    }
+
+    for (thread& thread : carThreads)
+        thread.join();
     ncursesThread.join();
 
     cout<<"Program zakonczony"<<endl;
