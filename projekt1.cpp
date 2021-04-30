@@ -1,3 +1,8 @@
+// Treść zadania:
+// Samochód nie może wjechać na prawą krawędź, gdy jego prędkość jest większa od 
+// prędkośći samochodu znajdującego się na tej krawędzi.
+// W takim wypadku zatrzymuje się i czeka aż na krawędzi nie będzie wolniejszego auta.
+
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -55,6 +60,8 @@ class Car
     vector<Car*> &carsOnRightEdgeVector;
     // zmienna określająca, czy samochód znajduje się na prawej krawędzi
     bool isOnRightEdge = false;
+    // indeks wolniejszego samochodu na który trzeba poczekać
+    int slowerCarIndex;
 
     public:
     // konstruktor
@@ -165,7 +172,12 @@ class Car
                     for(int i = 0; i < carsOnRightEdgeVector.size();i++)
                     {
                         if(carsOnRightEdgeVector[i]->getSpeed() < speed)
+                        {
                             mustWait = true;
+                            break;
+                            slowerCarIndex = i;
+                        }
+                            
                     }
                 }
             }
@@ -177,6 +189,12 @@ class Car
 
             if(!mustWait)
                 drive();
+            else
+            {
+                // usypianie wątku na czas aż wolniejsze auto dojedzie do końca prawej krawędzi
+                this_thread::sleep_for(chrono::milliseconds((int)(3000/(carsOnRightEdgeVector[slowerCarIndex]->getSpeed()*horizontalSpeedBonus*SPEED_MULTIPLIER))
+                *carsOnRightEdgeVector[slowerCarIndex]->getPosY()));
+            }
         };
         isDriving = false;
         delete this;
