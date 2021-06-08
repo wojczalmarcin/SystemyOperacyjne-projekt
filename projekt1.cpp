@@ -2,6 +2,10 @@
 // Samochód nie może wjechać na prawą krawędź, gdy jego prędkość jest większa od 
 // prędkośći samochodu znajdującego się na tej krawędzi.
 // W takim wypadku zatrzymuje się i czeka aż na krawędzi nie będzie wolniejszego auta.
+//
+// Semafor, który będzie się zapalał na czerwony, gdy auta stoją, potem na zielony i
+// dopiero wtedy auto porusza się do przodu, stojące auta w kolejce są ustawione jeden za drugim,
+// jak wjedzie pierwszy to się przesuwają, semafor zapala się na czerwone
 
 #include <iostream>
 #include <thread>
@@ -10,6 +14,8 @@
 #include <vector>
 #include <ctime>
 #include <mutex>
+#include <queue>
+#include <semaphore.h>
 
 using namespace std;
 
@@ -17,6 +23,7 @@ using namespace std;
 #define EDGE_PAIR           2
 #define CAR_PAIR            3
 #define GRASS_PAIR          4
+#define RED_LIGHT_PAIR      5
 #define SPEED_MULTIPLIER    0.8
 
 // zmienna określająca długość poziomego odcinka
@@ -33,6 +40,17 @@ static int maxLaps = 3;
 bool isWorking = true;
 // mutex
 mutex edgeMutex;
+// kolejka czekających samochodów
+//queue<int> waitingCars;
+// Semafor
+sem_t mySemaphore;
+
+bool RedLight = false;
+
+// liczba czekających samochodów
+int numberOfWaitingCars = 0;
+// mutex do modyfikacji liczby czekających samochodów
+mutex waitingCarsMutex;
 
 ///
 /// Klasa opisująca samochód
@@ -57,16 +75,22 @@ class Car
     // znak oznaczający pojazd
     int id;
     // wektor samochodów znajdujących się na prawej krawędzi
+    vector<Car*> &carsVector;
+    // wektor samochodów znajdujących się na prawej krawędzi
     vector<Car*> &carsOnRightEdgeVector;
     // zmienna określająca, czy samochód znajduje się na prawej krawędzi
     bool isOnRightEdge = false;
     // indeks wolniejszego samochodu na który trzeba poczekać
     int slowerCarIndex;
-
+    // zmienna określająca czy samochód musi czekać
+    bool mustWait = false;
+    // zmienna określająca czy samochód musi się zatrzymać na czerwonym
+    //bool redLight = false;
+    std::mutex mtx;
     public:
     // konstruktor
-    Car(int x, int y, int Id, vector<Car*> &cars) 
-        : carsOnRightEdgeVector(cars)
+    Car(int x, int y, int Id, vector<Car*> &cars,vector<Car*> &cars2) 
+        : carsOnRightEdgeVector(cars), carsVector(cars2)
     {
         posX = x;
         posY = y;
@@ -79,21 +103,31 @@ class Car
     }
 
     // funkcja zwracająca prędkość samochodu
-    int getSpeed(){return speed;}
+    int getSpeed(){lock_guard<mutex> lk(mtx); return speed;}
     // funkcja ustawiająca prędkość samochodu
     void setSpeed(int val){speed = val;}
 
     // funkcja zwracajaca pozycję na osi X samochodu
-    int getPosX(){return posX;}
+    int getPosX(){lock_guard<mutex> lk(mtx); return posX;}
     // funkcja zwracajaca pozycję na osi Y samochodu
-    int getPosY(){return posY;}
+    int getPosY(){lock_guard<mutex> lk(mtx); return posY;}
 
     // funkcja zwracajaca informację, czy samochód jedzie
-    bool getIsDriving(){return isDriving;}
+    bool getIsDriving(){lock_guard<mutex> lk(mtx); return isDriving;}
 
     // funkcja zwracająca znak pojazdu
     int getId(){return id;}
+    // funkcja zwracająca czy samochód jest na prawej krawędzi
 
+    bool getIsOnRightEdge(){lock_guard<mutex> lk(mtx); return isOnRightEdge;}
+    // funkcja zwracająca status czekania
+    bool getMustWait(){lock_guard<mutex> lk(mtx); return mustWait;}
+    // funkcja ustawiająca status czekania
+    void setMustWait(bool wait){mustWait = wait;}
+    // funkcja zwracająca status czerwonego światła
+    //bool getRedLight(){return redLight;}
+    // funkcja ustawiająca status czerwonego światła
+    //void setRedLight(bool red){redLight = red;}
     // funkcja poruszajaca samochód o jedną jednostkę
     void drive()
     {
@@ -132,13 +166,11 @@ class Car
             posY-=1;
         }
     }
-
+    
     // funkcja porusza samochód do momentu aż przejdzie 3 okrążenia
     // dodaje również samochód do wektora prawej krawędzi jeśli
     // faktycznie się na niej znajdzie
     void driveLaps(){
-
-        bool mustWait = false;
 
         while(lap<maxLaps && isWorking == true)
         {
@@ -163,8 +195,24 @@ class Car
             }
             edgeMutex.unlock();
 
+            // sprawdzenie czy samochód znajdujący się przed stoi, jeśli tak to przerwij jazdę
+            if(carsVector.size()>1)
+            {
+                for(int i = 0; i < carsVector.size();i++)
+                {
+                    if(posX == carsVector[i]->posX - 1 && carsVector[i]->mustWait && posY == carsVector[i]->posY && posY>=(verticalRoadLenght-1))
+                    {
+                        mustWait = true;
+                    }
+                }
+            }
+           
+            if(RedLight && posX >= (horizontalRoadLenght-1) && posY >=(verticalRoadLenght-1))
+                mustWait = true;
+            //if(redLight)
+            //    mustWait = true;
+            /*
             // porównanie prędkości samochodów znajdujących się na prawej krawędzi
-            mustWait = false;
             if(!isOnRightEdge && posX>=(horizontalRoadLenght-1) && posY>=(verticalRoadLenght-1))
             {
                 if(carsOnRightEdgeVector.size()!=0)
@@ -174,13 +222,14 @@ class Car
                         if(carsOnRightEdgeVector[i]->getSpeed() < speed)
                         {
                             mustWait = true;
-                            break;
                             slowerCarIndex = i;
+                            break;
+                            
                         }
                             
                     }
                 }
-            }
+            }*/
             if(posY==startPosY && posX==startPosX)
             {
                  lap++;
@@ -191,16 +240,77 @@ class Car
                 drive();
             else
             {
+                waitingCarsMutex.lock();
+                numberOfWaitingCars++;
+                waitingCarsMutex.unlock();
+
+                sem_wait(&mySemaphore);
+                mustWait = false;
+                waitingCarsMutex.lock();
+                numberOfWaitingCars--;
+                waitingCarsMutex.unlock();
+                sem_post(&mySemaphore);
                 // usypianie wątku na czas aż wolniejsze auto dojedzie do końca prawej krawędzi
-                this_thread::sleep_for(chrono::milliseconds((int)(3000/(carsOnRightEdgeVector[slowerCarIndex]->getSpeed()*horizontalSpeedBonus*SPEED_MULTIPLIER))
-                *carsOnRightEdgeVector[slowerCarIndex]->getPosY()));
+                //this_thread::sleep_for(chrono::milliseconds((int)(3000/(carsOnRightEdgeVector[slowerCarIndex]->getSpeed()*horizontalSpeedBonus*SPEED_MULTIPLIER))
+                //*carsOnRightEdgeVector[slowerCarIndex]->getPosY()));
+                //break;
             }
         };
-        isDriving = false;
-        delete this;
+        
+        if(lap>=maxLaps)
+        {
+            isDriving = false;
+            delete this;
+        }
     }
 };
 
+// funckja włączająca czerwone światło zmuszające auta do czekania
+void redLight(vector<Car*> &cars,vector<Car*> &carsOnRightEdgeVector)
+{
+    int slowerCarIndex = 0;
+    // NAPISAĆ TE PĘTLĘ INACZEJ!!!
+    while(isWorking)
+    {
+        if(cars.size()>1)
+        {
+            if(numberOfWaitingCars==0)
+            {
+                for(int j = 0;j< cars.size();j++)
+                {
+                    if(!cars[j]->getIsOnRightEdge() && cars[j]->getPosX()>=(horizontalRoadLenght-1) && cars[j]->getPosY()>=(verticalRoadLenght-1))
+                    {
+                        if(carsOnRightEdgeVector.size()!=0)
+                        {
+                            for(int i = 0; i < carsOnRightEdgeVector.size();i++)
+                            {
+                                if(carsOnRightEdgeVector[i]->getSpeed() < cars[j]->getSpeed())
+                                {
+                                    slowerCarIndex = i;
+                                    RedLight = true;
+                                    break;
+                                }                        
+                            }
+                        }
+                    }
+                }
+            }
+            else if(carsOnRightEdgeVector.size()>0)
+            {
+                slowerCarIndex = 0;
+                RedLight = true;
+            }
+        }
+        if(RedLight)
+        {
+            sem_wait(&mySemaphore);
+            this_thread::sleep_for(chrono::milliseconds((int)(3000/(carsOnRightEdgeVector[slowerCarIndex]->getSpeed()*horizontalSpeedBonus*SPEED_MULTIPLIER) + 10)
+                *carsOnRightEdgeVector[slowerCarIndex]->getPosY()));
+            RedLight= false;
+            sem_post(&mySemaphore);
+        }
+    }
+}
 // funkcja rysująca samochody
 void draw(vector<Car*> &cars)
 {
@@ -215,6 +325,7 @@ void draw(vector<Car*> &cars)
     init_pair(EDGE_PAIR, COLOR_YELLOW, COLOR_YELLOW);
     init_pair(CAR_PAIR, COLOR_WHITE, COLOR_RED);
     init_pair(GRASS_PAIR, COLOR_GREEN, COLOR_GREEN);
+    init_pair(RED_LIGHT_PAIR, COLOR_RED, COLOR_RED);
     //jeśli użytkownik nie zakończył programu i wszystkie auta nie przejechały 3 okrążań to program trwa
     while(isWorking)
     {  
@@ -251,6 +362,12 @@ void draw(vector<Car*> &cars)
                 cars.erase(cars.begin()+i);
             }
         }
+        if(RedLight)
+            attron(COLOR_PAIR(RED_LIGHT_PAIR));
+        else
+            attron(COLOR_PAIR(GRASS_PAIR));
+        mvprintw(verticalRoadLenght+6,horizontalRoadLenght*2 + 5,"OO");
+        attron(COLOR_PAIR(CAR_PAIR));
         attroff(COLOR_PAIR(CAR_PAIR));
         refresh();
         int ch = getch();
@@ -269,13 +386,15 @@ void draw(vector<Car*> &cars)
 // Main
 int main()
 {
+    sem_init(&mySemaphore, 0, 1);
     srand(time(0));
     vector<Car*> carsVector;
     vector<Car*> carsOnRightEdgeVector;
     vector<thread> carThreads;
-    carsVector.emplace_back(new Car(10,0,0,ref(carsOnRightEdgeVector)));
+    carsVector.emplace_back(new Car(10,0,0,ref(carsOnRightEdgeVector),ref(carsVector)));
     carThreads.emplace_back(&Car::driveLaps,carsVector.back());
     thread ncursesThread(draw,ref(carsVector));
+    thread redLightThread(redLight,ref(carsVector),ref(carsOnRightEdgeVector));
 
     int number = 0;
     while(isWorking)
@@ -284,14 +403,15 @@ int main()
         number++;
         if(number>98)
             number = 0;
-        carsVector.emplace_back(new Car(10,0,number,ref(carsOnRightEdgeVector)));
+        carsVector.emplace_back(new Car(10,0,number,ref(carsOnRightEdgeVector),ref(carsVector)));
         carThreads.emplace_back(&Car::driveLaps,carsVector.back());
     }
 
     for (thread& thread : carThreads)
         thread.join();
     ncursesThread.join();
-
+    redLightThread.join();
+    sem_destroy(&mySemaphore);
     cout<<"Program zakonczony"<<endl;
     return 0;
 }
